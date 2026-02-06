@@ -64,7 +64,7 @@ jobs:
 
   clean:
 
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     name: Purge older releases
     runs-on: [ubuntu-latest]
     steps:
@@ -84,7 +84,7 @@ jobs:
           days_old: 14
 
   fake:
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     runs-on: small
     needs: [ clean ]
     name: Source changes
@@ -96,7 +96,7 @@ jobs:
           echo "not empty" > changes
 
       - uses: actions/checkout@v3
-        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        if: ${{ github.repository_owner == 'zys1310992814' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           fetch-depth: 1
           path: build
@@ -104,7 +104,7 @@ jobs:
           ref: nightly
 
       - name: "Get latest release version"
-        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        if: ${{ github.repository_owner == 'zys1310992814' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         id: list_releases
         run: |
 
@@ -134,7 +134,7 @@ jobs:
   generaterelease:
 
     needs: [ fake ]
-    if: ${{ github.repository_owner == 'Armbian' && needs.fake.outputs.changes != 'true' }}
+    if: ${{ github.repository_owner == 'zys1310992814' && needs.fake.outputs.changes != 'true' }}
     runs-on: ubuntu-latest
     name: "Update latest release"
     steps:
@@ -148,12 +148,12 @@ jobs:
           echo "Version: ${{ needs.fake.outputs.version }}"
 
       - uses: actions/checkout@v3
-        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        if: ${{ github.repository_owner == 'zys1310992814' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           fetch-depth: 1
 
       - uses: ClementTsang/delete-tag-and-release@v0.3.1
-        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        if: ${{ github.repository_owner == 'zys1310992814' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           delete_release: true
           tag_name: latest
@@ -162,7 +162,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ncipollo/release-action@v1
-        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        if: ${{ github.repository_owner == 'zys1310992814' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           artifacts: "LICENSE"
           tag: "${{ needs.fake.outputs.version }}"
