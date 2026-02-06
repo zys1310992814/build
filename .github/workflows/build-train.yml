@@ -34,7 +34,7 @@ jobs:
 
   Cancel:
     name: "Cancel currently active"
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     runs-on: small
     timeout-minutes: 3
     steps:
@@ -54,7 +54,7 @@ jobs:
     permissions:
       contents: none
     needs: Cancel
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/clean-upload.yml@master
     secrets:
       KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
@@ -68,7 +68,7 @@ jobs:
 
   Bump:
     needs: [Cleaning]
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/update-version.yml@master
 
     with:
@@ -114,7 +114,7 @@ jobs:
       contents: none
     name: Checking
     needs: Merge
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/check-for-changes.yml@master
 
     with:
@@ -132,7 +132,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-kernel.yml@master
 
     with:
@@ -160,7 +160,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-firmware.yml@master
 
     with:
@@ -183,7 +183,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-desktop.yml@master
 
     with:
@@ -211,7 +211,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
     with:
@@ -236,7 +236,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
     with:
@@ -262,7 +262,7 @@ jobs:
     permissions:
       contents: none
     needs: Check
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
     with:
@@ -306,7 +306,7 @@ jobs:
     permissions:
       contents: none
     needs: [Deploycheck]
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/deploy.yml@master
 
     with:
@@ -327,7 +327,7 @@ jobs:
       contents: none
     name: "Update stable"
     needs: [Deploy]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     runs-on: [self-hosted, Linux, local]
     steps:
       - name: Remove previous artefacts if any
@@ -353,7 +353,7 @@ jobs:
       contents: none
     name: "Update beta"
     needs: [Deploy]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     runs-on: [self-hosted, Linux, local]
     steps:
       - name: Remove previous artefacts if any
@@ -379,7 +379,7 @@ jobs:
       contents: none
     name: "Sync servers"
     needs: [apt-armbian-com,beta-armbian-com]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     runs-on: [self-hosted, Linux, local]
     steps:
       - name: Remove previous artefacts if any
@@ -405,7 +405,7 @@ jobs:
     name: Clean
     needs: [sync-servers]
     runs-on: Linux
-    if: ${{ success() && github.repository_owner == 'Armbian' }}
+    if: ${{ success() && github.repository_owner == 'zys1310992814' }}
     steps:
 
       - name: Cleaning
