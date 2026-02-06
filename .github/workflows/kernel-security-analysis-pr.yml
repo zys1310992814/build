@@ -21,7 +21,7 @@ jobs:
 
     name: Analyse
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     steps:
 
        - name: Checkout repository
