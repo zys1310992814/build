@@ -24,7 +24,7 @@ jobs:
     permissions:
       contents: none
 
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/update-docker-image.yml@master
 
     secrets:
@@ -35,7 +35,7 @@ jobs:
       contents: none
 
     needs: Docker
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/build-test-image-docker.yml@master
     with:
 
