@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: none
 
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     uses: armbian/scripts/.github/workflows/smoke-tests.yml@master
     secrets:
       NETBOX_TOKEN: ${{ secrets.NETBOX_TOKEN }}
