@@ -24,7 +24,7 @@ jobs:
       contents: none
     runs-on: small
     name: Source changes
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     steps:
       - run: |
           echo "not empty" > changes
