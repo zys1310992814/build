@@ -15,7 +15,7 @@ jobs:
 
     name: Check images integrity
     runs-on: [fast, igor]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'zys1310992814' }}
     steps:
 
       - uses: igorpecovnik/freespace@main
