@@ -10,7 +10,7 @@ on:
 jobs:
   fork-repository-dispatch:
     name: 📢 Run repository dispatch to default fork branch
-    if: ${{ github.repository_owner != 'armbian' }}
+    if: ${{ github.repository_owner != 'zys1310992814' }}
     runs-on: ubuntu-latest
     steps:
       - name: Assign secret
