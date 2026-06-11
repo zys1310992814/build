@@ -1,0 +1,69 @@
+name: 手动构建 Armbian 镜像
+
+on:
+  # 这是关键配置：添加手动触发按钮
+  workflow_dispatch:
+    # 定义输入参数，这些参数会在网页表单中显示
+    inputs:
+      board:
+        description: '目标开发板 (如: orangepi5, raspberrypi4)'
+        required: true
+        default: 'orangepi5'
+        type: choice
+        options:
+          - orangepi5
+          - raspberrypi4
+          - bananapim2zero
+      release:
+        description: '基础发行版 (noble=Ubuntu24.04, jammy=Ubuntu22.04, bookworm=Debian12)'
+        required: true
+        default: 'noble'
+        type: choice
+        options:
+          - noble
+          - jammy
+          - bookworm
+      kernel_branch:
+        description: '内核分支 (current=稳定版, edge=前沿版, legacy=旧版)'
+        required: true
+        default: 'current'
+        type: choice
+        options:
+          - current
+          - edge
+          - legacy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support
+
+      - name: 运行 Armbian 构建
+        run: |
+          echo "开始构建..."
+          echo "开发板: ${{ github.event.inputs.board }}"
+          echo "发行版: ${{ github.event.inputs.release }}"
+          echo "内核: ${{ github.event.inputs.kernel_branch }}"
+          # 调用 Armbian 编译脚本
+          ./compile.sh \
+            BOARD=${{ github.event.inputs.board }} \
+            RELEASE=${{ github.event.inputs.release }} \
+            KERNEL_BRANCH=${{ github.event.inputs.kernel_branch }} \
+            BUILD_MINIMAL=no \
+            BUILD_DESKTOP=no \
+            KERNEL_ONLY=no \
+            KERNEL_CONFIGURE=no
+
+      - name: 上传构建产物（镜像文件）
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-${{ github.event.inputs.board }}-${{ github.event.inputs.release }}
+          path: output/images/*.img*
+          if-no-files-found: error
