@@ -1,19 +1,8 @@
-name: 手动构建 Armbian 镜像
+name: 为 x86_64 PC 构建 Armbian 镜像
 
 on:
-  # 这是关键配置：添加手动触发按钮
   workflow_dispatch:
-    # 定义输入参数，这些参数会在网页表单中显示
     inputs:
-      board:
-        description: '目标开发板 (如: orangepi5, raspberrypi4)'
-        required: true
-        default: 'orangepi5'
-        type: choice
-        options:
-          - orangepi5
-          - raspberrypi4
-          - bananapim2zero
       release:
         description: '基础发行版 (noble=Ubuntu24.04, jammy=Ubuntu22.04, bookworm=Debian12)'
         required: true
@@ -23,18 +12,18 @@ on:
           - noble
           - jammy
           - bookworm
-      kernel_branch:
-        description: '内核分支 (current=稳定版, edge=前沿版, legacy=旧版)'
+      desktop:
+        description: '构建类型'
         required: true
-        default: 'current'
+        default: 'server'
         type: choice
         options:
-          - current
-          - edge
-          - legacy
+          - server    # 标准服务器/命令行版
+          - gnome     # GNOME 桌面版
+          - xfce      # XFCE 桌面版
 
 jobs:
-  build:
+  build-armbian-x86:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -43,27 +32,43 @@ jobs:
       - name: 安装构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap qemu-user-static binfmt-support
+          sudo apt-get install -y \
+            debootstrap \
+            qemu-user-static \
+            binfmt-support \
+            dialog
 
-      - name: 运行 Armbian 构建
+      - name: 运行 Armbian 构建 (目标: x86_64)
         run: |
-          echo "开始构建..."
-          echo "开发板: ${{ github.event.inputs.board }}"
-          echo "发行版: ${{ github.event.inputs.release }}"
-          echo "内核: ${{ github.event.inputs.kernel_branch }}"
-          # 调用 Armbian 编译脚本
+          # 根据用户选择的桌面类型设置构建标志
+          if [[ "${{ github.event.inputs.desktop }}" == "server" ]]; then
+            BUILD_DESKTOP="no"
+            BUILD_MINIMAL="no"
+            DESKTOP_ENVIRONMENT=""
+          else
+            BUILD_DESKTOP="yes"
+            BUILD_MINIMAL="no"
+            DESKTOP_ENVIRONMENT="${{ github.event.inputs.desktop }}"
+          fi
+
+          # 设置关键环境变量
+          export KERNEL_CONFIGURE=no          # 禁止内核配置菜单
+          export PROGRESS_DISPLAY=plain       # 使用纯文本进度显示
+          export EXPERT=yes                   # 专家模式
+
+          # 执行构建命令，核心是 BOARD=uefi-x86
           ./compile.sh \
-            BOARD=${{ github.event.inputs.board }} \
+            BOARD=uefi-x86 \
+            BRANCH=current \
             RELEASE=${{ github.event.inputs.release }} \
-            KERNEL_BRANCH=${{ github.event.inputs.kernel_branch }} \
-            BUILD_MINIMAL=no \
-            BUILD_DESKTOP=no \
-            KERNEL_ONLY=no \
+            BUILD_DESKTOP=$BUILD_DESKTOP \
+            BUILD_MINIMAL=$BUILD_MINIMAL \
+            DESKTOP_ENVIRONMENT=$DESKTOP_ENVIRONMENT \
             KERNEL_CONFIGURE=no
 
-      - name: 上传构建产物（镜像文件）
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: armbian-${{ github.event.inputs.board }}-${{ github.event.inputs.release }}
+          name: armbian-uefi-x86-${{ github.event.inputs.release }}-${{ github.event.inputs.desktop }}
           path: output/images/*.img*
           if-no-files-found: error
