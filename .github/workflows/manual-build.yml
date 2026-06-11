@@ -1,74 +1,29 @@
-name: 为 x86_64 PC 构建 Armbian 镜像
+name: 构建 x86_64 Armbian 服务器版
 
 on:
   workflow_dispatch:
-    inputs:
-      release:
-        description: '基础发行版 (noble=Ubuntu24.04, jammy=Ubuntu22.04, bookworm=Debian12)'
-        required: true
-        default: 'noble'
-        type: choice
-        options:
-          - noble
-          - jammy
-          - bookworm
-      desktop:
-        description: '构建类型'
-        required: true
-        default: 'server'
-        type: choice
-        options:
-          - server    # 标准服务器/命令行版
-          - gnome     # GNOME 桌面版
-          - xfce      # XFCE 桌面版
 
 jobs:
-  build-armbian-x86:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 安装构建依赖
+      - uses: actions/checkout@v4
+      
+      - name: 安装依赖
+        run: sudo apt-get update && sudo apt-get install -y debootstrap qemu-user-static binfmt-support
+      
+      - name: 构建
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            debootstrap \
-            qemu-user-static \
-            binfmt-support \
-            dialog
-
-      - name: 运行 Armbian 构建 (目标: x86_64)
-        run: |
-          # 根据用户选择的桌面类型设置构建标志
-          if [[ "${{ github.event.inputs.desktop }}" == "server" ]]; then
-            BUILD_DESKTOP="no"
-            BUILD_MINIMAL="no"
-            DESKTOP_ENVIRONMENT=""
-          else
-            BUILD_DESKTOP="yes"
-            BUILD_MINIMAL="no"
-            DESKTOP_ENVIRONMENT="${{ github.event.inputs.desktop }}"
-          fi
-
-          # 设置关键环境变量
-          export KERNEL_CONFIGURE=no          # 禁止内核配置菜单
-          export PROGRESS_DISPLAY=plain       # 使用纯文本进度显示
-          export EXPERT=yes                   # 专家模式
-
-          # 执行构建命令，核心是 BOARD=uefi-x86
           ./compile.sh \
             BOARD=uefi-x86 \
             BRANCH=current \
-            RELEASE=${{ github.event.inputs.release }} \
-            BUILD_DESKTOP=$BUILD_DESKTOP \
-            BUILD_MINIMAL=$BUILD_MINIMAL \
-            DESKTOP_ENVIRONMENT=$DESKTOP_ENVIRONMENT \
-            KERNEL_CONFIGURE=no
-
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+            RELEASE=noble \
+            BUILD_DESKTOP=no \
+            BUILD_MINIMAL=no \
+            KERNEL_CONFIGURE=no \
+            PROGRESS_DISPLAY=plain
+      
+      - uses: actions/upload-artifact@v4
         with:
-          name: armbian-uefi-x86-${{ github.event.inputs.release }}-${{ github.event.inputs.desktop }}
+          name: armbian-uefi-x86
           path: output/images/*.img*
-          if-no-files-found: error
