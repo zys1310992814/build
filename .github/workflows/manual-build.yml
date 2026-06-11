@@ -1,0 +1,66 @@
+name: 手动构建 Armbian x86_64（无GUI模式）
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '发行版版本'
+        required: true
+        default: 'noble'
+        type: choice
+        options:
+          - noble      # Ubuntu 24.04
+          - jammy      # Ubuntu 22.04
+          - bookworm   # Debian 12
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            debootstrap qemu-user-static binfmt-support \
+            u-boot-tools device-tree-compiler dosfstools fdisk gawk \
+            git grep gzip initramfs-tools libssl-dev lsb-release parted \
+            pv systemd-container tar xz-utils
+
+      - name: 构建 Armbian 镜像（完全非交互）
+        run: |
+          # 禁用所有交互式 GUI 的关键环境变量
+          export DEBIAN_FRONTEND=noninteractive
+          export KERNEL_CONFIGURE=no
+          export PROGRESS_DISPLAY=plain
+          export PROGRESS_LOG_TO_FILE=yes
+          export EXPERT=yes
+          export SILENT=no
+          export FORCE_USE_RAMDISK=no
+          export IGNORE_UPDATES=yes
+          export SKIP_ARMBIAN_REPO=yes
+          
+          # 禁用 dialog 和 whiptail 相关提示
+          export TERM=dumb
+          export NO_PROGRESS_DISPLAY=yes
+          
+          # 构建命令
+          ./compile.sh \
+            BOARD=uefi-x86 \
+            BRANCH=current \
+            RELEASE=${{ github.event.inputs.release }} \
+            BUILD_DESKTOP=no \
+            BUILD_MINIMAL=no \
+            KERNEL_CONFIGURE=no \
+            PROGRESS_DISPLAY=plain \
+            EXPERT=yes \
+            CLEAN_LEVEL="make,oldcache,alldebs,debs,images" \
+            COMPRESS_OUTPUTIMAGE=xz
+
+      - name: 上传镜像
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-x86-${{ github.event.inputs.release }}-${{ github.run_number }}
+          path: output/images/*.img*
