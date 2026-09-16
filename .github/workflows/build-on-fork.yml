@@ -1,0 +1,116 @@
+# =============================================================================
+# Build Armbian on a FORK via GitHub Actions
+# -----------------------------------------------------------------------------
+# 说明：
+#   * 官方 maintenance-build-artifacts.yml 带 `if: owner=='armbian'` 守卫，且依赖
+#     Armbian 自托管 runner（标签 Linux/big/small），在个人 fork 上不会真正执行。
+#   * 本工作流绕开上述限制：用 workflow_dispatch（手动）触发，直接 checkout 本仓库
+#     并在 runner 上运行 ./compile.sh 完成编译。
+#   * 可选接入官方 fork 转发机制：若你在仓库设置了密钥 ARMBIAN_SELF_DISPATCH_TOKEN，
+#     infrastructure-dispatch-to-fork.yml 会在 push/PR/release 时向你仓库发出
+#     repository_dispatch 事件 "armbian"，本工作流的 repository_dispatch 触发器会响应。
+#     注意：开启 repository_dispatch 后，每次 push 都会自动触发构建，按需保留。
+#
+# 用法：
+#   1. 把本文件放到 fork 仓库的 .github/workflows/ 目录下（如 build-on-fork.yml）。
+#   2. Settings → Actions → General → 选 "Allow all actions and reusable workflows"。
+#   3. Actions 标签页 → 选 "Build Armbian (fork)" → Run workflow → 填 board/branch/release。
+#
+# 资源提示：
+#   * GitHub 托管 ubuntu-latest（2 vCPU / 7GB）只适合 KERNEL_ONLY 或 BUILD_MINIMAL 的小镜像，
+#     完整镜像容易 OOM/超时。完整镜像请改用自托管 runner：把 runs-on 改成 [self-hosted, big]。
+#   * 自托管 runner 规格参考官方：big(6-16核/16G)、small(4核/8G)、arm64。
+# =============================================================================
+
+name: "Build Armbian (fork)"
+run-name: "Build ${{ inputs.board || 'orangepizero' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "目标板型，例如 orangepizero / nanopi-r5s / bananapim5 / rockpi-4b"
+        required: true
+        default: "orangepizero"
+      branch:
+        description: "内核分支"
+        required: true
+        default: "current"
+        type: choice
+        options: [legacy, current, edge]
+      release:
+        description: "用户空间发行版"
+        required: true
+        default: "bookworm"
+        type: choice
+        options: [bullseye, bookworm, trixie, noble]
+      build_target:
+        description: "构建镜像还是仅内核/U-Boot"
+        required: true
+        default: "image"
+        type: choice
+        options: [image, kernel]
+      minimal:
+        description: "构建最小镜像（更快更小）"
+        required: true
+        default: "yes"
+        type: choice
+        options: ["yes", "no"]
+  # 接入官方 fork 转发机制（可选，按需开启）
+  repository_dispatch:
+    types: ["armbian"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "Build ${{ inputs.board || 'orangepizero' }}"
+    # 完整镜像建议用自托管 runner（在 Settings→Actions→Runners 注册，打 big 标签）：
+    # runs-on: [self-hosted, big]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      BOARD: ${{ inputs.board || 'orangepizero' }}
+      BRANCH: ${{ inputs.branch || 'current' }}
+      RELEASE: ${{ inputs.release || 'bookworm' }}
+      BUILD_MINIMAL: ${{ inputs.minimal || 'yes' }}
+      KERNEL_ONLY: ${{ inputs.build_target == 'kernel' && 'yes' || 'no' }}
+      IGNORE_UPDATES: "yes"      # 跳过版本更新检查，避免交互卡住
+      NO_APT_CACHER: "yes"       # 不使用 apt-cacher
+      USE_TORRENT: "no"          # 不用 torrent 下载
+      SHOW_LOG: "yes"
+      BETA: "yes"                # 允许构建（非稳定分支）
+      DEBIAN_FRONTEND: "noninteractive"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl git gnupg ca-certificates \
+            tzdata pv pigz bison flex bc device-tree-compiler \
+            libncurses-dev libssl-dev
+
+      - name: Show build configuration
+        run: |
+          echo "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE}"
+          echo "KERNEL_ONLY=${KERNEL_ONLY} BUILD_MINIMAL=${BUILD_MINIMAL}"
+
+      - name: Start build (non-interactive)
+        run: ./compile.sh
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-${{ inputs.board || 'orangepizero' }}-${{ inputs.branch || 'current' }}
+          path: |
+            output/images/*.img*
+            output/debs/*.deb
+          if-no-files-found: ignore
+          retention-days: 7
