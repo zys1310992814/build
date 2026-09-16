@@ -94,7 +94,6 @@ jobs:
       BUILD_MINIMAL: ${{ inputs.minimal || 'no' }}
       BUILD_DESKTOP: ${{ inputs.desktop || 'no' }}
       BUILD_TARGET_VAL: ${{ inputs.build_target || 'image' }}
-      KERNEL_ONLY: ${{ inputs.build_target == 'kernel' && 'yes' || 'no' }}
       KERNEL_CONFIGURE: "no"      # 不自问内核配置，避免交互卡住
       IGNORE_UPDATES: "yes"       # 跳过版本更新检查
       NO_APT_CACHER: "yes"        # 不使用 apt-cacher
@@ -147,21 +146,35 @@ jobs:
       - name: Start build (non-interactive)
         # 所有参数以命令行参数形式传入 ./compile.sh —— Armbian 会 export 它们并带进 Docker 容器，
         # 比单纯 env: 更可靠（env 变量不一定全被转发进容器，导致卡在交互菜单）。
+        # 新版 Armbian(26.11+) 已废弃 KERNEL_ONLY 环境变量，改用子命令：
+        #   ./compile.sh build  -> 完整镜像(含内核+U-Boot)
+        #   ./compile.sh kernel -> 仅内核/U-Boot
         run: |
-          ./compile.sh \
-            BOARD="${BOARD}" \
-            BRANCH="${BRANCH}" \
-            RELEASE="${RELEASE}" \
-            BUILD_TARGET="${BUILD_TARGET_VAL}" \
-            BUILD_MINIMAL="${BUILD_MINIMAL}" \
-            BUILD_DESKTOP="${BUILD_DESKTOP}" \
-            KERNEL_ONLY="${KERNEL_ONLY}" \
-            KERNEL_CONFIGURE="no" \
-            IGNORE_UPDATES="yes" \
-            NO_APT_CACHER="yes" \
-            USE_TORRENT="no" \
-            BETA="yes" \
-            DEBIAN_FRONTEND="noninteractive"
+          if [ "${{ inputs.build_target }}" = "kernel" ]; then
+            ./compile.sh kernel \
+              BOARD="${BOARD}" \
+              BRANCH="${BRANCH}" \
+              KERNEL_CONFIGURE="no" \
+              IGNORE_UPDATES="yes" \
+              NO_APT_CACHER="yes" \
+              USE_TORRENT="no" \
+              BETA="yes" \
+              DEBIAN_FRONTEND="noninteractive"
+          else
+            ./compile.sh build \
+              BOARD="${BOARD}" \
+              BRANCH="${BRANCH}" \
+              RELEASE="${RELEASE}" \
+              BUILD_TARGET="${BUILD_TARGET_VAL}" \
+              BUILD_MINIMAL="${BUILD_MINIMAL}" \
+              BUILD_DESKTOP="${BUILD_DESKTOP}" \
+              KERNEL_CONFIGURE="no" \
+              IGNORE_UPDATES="yes" \
+              NO_APT_CACHER="yes" \
+              USE_TORRENT="no" \
+              BETA="yes" \
+              DEBIAN_FRONTEND="noninteractive"
+          fi
 
       - name: Upload artifacts
         if: always()
