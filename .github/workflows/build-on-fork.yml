@@ -84,7 +84,8 @@ jobs:
   build:
     name: "Build ${{ inputs.board || 'aml-s9xx-box' }}"
     # runner 通过 workflow_dispatch 输入选择；默认 ubuntu-latest（无自托管 runner 时）
-    runs-on: ${{ fromJson(inputs.runner) }}
+    # 用三元把两种输入都转成合法 JSON 再 fromJson：ubuntu-latest -> 字符串，其余 -> 数组
+    runs-on: ${{ fromJson(inputs.runner == 'ubuntu-latest' && '"ubuntu-latest"' || '["self-hosted", "linux", "x64"]') }}
     timeout-minutes: 360
     env:
       BOARD: ${{ inputs.board || 'aml-s9xx-box' }}
