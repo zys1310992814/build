@@ -10,6 +10,8 @@
 #     infrastructure-dispatch-to-fork.yml 会在 push/PR/release 时向你仓库发出
 #     repository_dispatch 事件 "armbian"，本工作流的 repository_dispatch 触发器会响应。
 #     注意：开启 repository_dispatch 后，每次 push 都会自动触发构建，按需保留。
+#   * 专用镜像：仅保留仓库根的 meson-sm1-ac2xx-generic.dtb，通过 userpatches/customize-image.sh
+#     在打包前 chroot 删除镜像 /boot/dtb 下其余所有 .dtb（.dtbo 覆盖层保留）。fdtfile 指向该 DTB。
 #
 # 用法：
 #   1. 把本文件放到 fork 仓库的 .github/workflows/ 目录下（如 build-on-fork.yml）。
@@ -113,7 +115,7 @@ jobs:
         # 该 action 用 tonistiigi/binfmt 注册带 F(fix_binary) 标志的处理器，子容器自动继承。
         uses: docker/setup-qemu-action@v3
 
-      - name: Inject custom DTB (meson-sm1-ac2xx-generic.dtb)
+      - name: Inject custom DTB + 专用镜像（删除其余 DTB）
         run: |
           DTB="meson-sm1-ac2xx-generic.dtb"
           if [ ! -f "$DTB" ]; then
@@ -127,7 +129,20 @@ jobs:
           cp "$DTB" userpatches/
           # 3) 让构建出的镜像用该 DTB 启动（userpatches/armbianEnv.txt 会被复制到 /boot/armbianEnv.txt）
           printf 'fdtfile=amlogic/%s\n' "$DTB" > userpatches/armbianEnv.txt
-          echo "已注入 DTB -> /boot/dtb/amlogic/$DTB"
+          # 4) 专用镜像：删除镜像中其余所有 .dtb，仅保留本板 DTB。
+          #    userpatches/customize-image.sh 在 rootfs 构建完成后、生成 .img 之前 chroot 执行，可安全删文件。
+          {
+            echo '#!/usr/bin/env bash'
+            echo 'set -e'
+            echo "DTB=\"${DTB}\""
+            echo 'echo "== 专用镜像：删除 /boot/dtb 下除 ${DTB} 外的所有 .dtb =="'
+            echo 'find /boot/dtb -type f -name "*.dtb" ! -name "${DTB}" -delete'
+            echo 'echo "fdtfile=amlogic/${DTB}" > /boot/armbianEnv.txt'
+            echo 'echo "保留的 DTB："'
+            echo 'find /boot/dtb -type f -name "*.dtb"'
+          } > userpatches/customize-image.sh
+          chmod +x userpatches/customize-image.sh
+          echo "已注入 DTB -> /boot/dtb/amlogic/$DTB，并写入 customize-image.sh 清理其余 DTB"
           cat userpatches/armbianEnv.txt
 
       - name: Install system dependencies
