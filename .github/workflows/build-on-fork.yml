@@ -16,22 +16,25 @@
 #   2. Settings → Actions → General → 选 "Allow all actions and reusable workflows"。
 #   3. Actions 标签页 → 选 "Build Armbian (fork)" → Run workflow → 填 board/branch/release。
 #
-# 资源提示：
-#   * GitHub 托管 ubuntu-latest（2 vCPU / 7GB）只适合 KERNEL_ONLY 或 BUILD_MINIMAL 的小镜像，
-#     完整镜像容易 OOM/超时。完整镜像请改用自托管 runner：把 runs-on 改成 [self-hosted, big]。
+# 资源提示（完整镜像 / Amlogic）：
+#   * GitHub 托管 ubuntu-latest（2 vCPU / 7GB / 磁盘约 14G 可用）几乎必然 OOM 或磁盘耗尽，
+#     且 6 小时硬上限经常不够。完整镜像必须用自托管 runner。
+#   * 本工作流提供 runner 选择输入：默认 ["self-hosted","linux","x64"]。
+#     在 Settings→Actions→Runners 注册一台 Linux x86_64 runner（WSL2 里跑即可），
+#     标签自行匹配；建议规格 ≥4 核 / 8GB 内存 / 40GB 空闲磁盘。
 #   * 自托管 runner 规格参考官方：big(6-16核/16G)、small(4核/8G)、arm64。
 # =============================================================================
 
 name: "Build Armbian (fork)"
-run-name: "Build ${{ inputs.board || 'orangepizero' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
+run-name: "Build ${{ inputs.board || 'aml-s9xx-box' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
 
 on:
   workflow_dispatch:
     inputs:
       board:
-        description: "目标板型，例如 orangepizero / nanopi-r5s / bananapim5 / rockpi-4b"
+        description: "目标板型。Amlogic S9xxx 电视盒子（含 S905X3）用 aml-s9xx-box"
         required: true
-        default: "orangepizero"
+        default: "aml-s9xx-box"
       branch:
         description: "内核分支"
         required: true
@@ -51,11 +54,25 @@ on:
         type: choice
         options: [image, kernel]
       minimal:
-        description: "构建最小镜像（更快更小）"
+        description: "最小镜像（BUILD_MINIMAL）。完整镜像选 no"
         required: true
-        default: "yes"
+        default: "no"
         type: choice
-        options: ["yes", "no"]
+        options: ["no", "yes"]
+      desktop:
+        description: "是否带桌面环境（BUILD_DESKTOP）。完整服务器镜像选 no"
+        required: true
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      runner:
+        description: "运行器。完整镜像务必用自托管 runner"
+        required: true
+        default: '["self-hosted", "linux", "x64"]'
+        type: choice
+        options:
+          - '["self-hosted", "linux", "x64"]'
+          - "ubuntu-latest"
   # 接入官方 fork 转发机制（可选，按需开启）
   repository_dispatch:
     types: ["armbian"]
@@ -65,22 +82,23 @@ permissions:
 
 jobs:
   build:
-    name: "Build ${{ inputs.board || 'orangepizero' }}"
-    # 完整镜像建议用自托管 runner（在 Settings→Actions→Runners 注册，打 big 标签）：
-    # runs-on: [self-hosted, big]
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
+    name: "Build ${{ inputs.board || 'aml-s9xx-box' }}"
+    # runner 通过 workflow_dispatch 输入选择；默认自托管（完整镜像必须）
+    runs-on: ${{ fromJson(inputs.runner) }}
+    timeout-minutes: 1440
     env:
-      BOARD: ${{ inputs.board || 'orangepizero' }}
+      BOARD: ${{ inputs.board || 'aml-s9xx-box' }}
       BRANCH: ${{ inputs.branch || 'current' }}
       RELEASE: ${{ inputs.release || 'bookworm' }}
-      BUILD_MINIMAL: ${{ inputs.minimal || 'yes' }}
+      BUILD_MINIMAL: ${{ inputs.minimal || 'no' }}
+      BUILD_DESKTOP: ${{ inputs.desktop || 'no' }}
       KERNEL_ONLY: ${{ inputs.build_target == 'kernel' && 'yes' || 'no' }}
-      IGNORE_UPDATES: "yes"      # 跳过版本更新检查，避免交互卡住
-      NO_APT_CACHER: "yes"       # 不使用 apt-cacher
-      USE_TORRENT: "no"          # 不用 torrent 下载
+      KERNEL_CONFIGURE: "no"      # 不自问内核配置，避免交互卡住
+      IGNORE_UPDATES: "yes"       # 跳过版本更新检查
+      NO_APT_CACHER: "yes"        # 不使用 apt-cacher
+      USE_TORRENT: "no"           # 不用 torrent 下载
       SHOW_LOG: "yes"
-      BETA: "yes"                # 允许构建（非稳定分支）
+      BETA: "yes"                 # 允许构建（非稳定分支）
       DEBIAN_FRONTEND: "noninteractive"
     steps:
       - name: Checkout
@@ -99,7 +117,7 @@ jobs:
       - name: Show build configuration
         run: |
           echo "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE}"
-          echo "KERNEL_ONLY=${KERNEL_ONLY} BUILD_MINIMAL=${BUILD_MINIMAL}"
+          echo "KERNEL_ONLY=${KERNEL_ONLY} BUILD_MINIMAL=${BUILD_MINIMAL} BUILD_DESKTOP=${BUILD_DESKTOP}"
 
       - name: Start build (non-interactive)
         run: ./compile.sh
@@ -108,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: armbian-${{ inputs.board || 'orangepizero' }}-${{ inputs.branch || 'current' }}
+          name: armbian-${{ inputs.board || 'aml-s9xx-box' }}-${{ inputs.branch || 'current' }}
           path: |
             output/images/*.img*
             output/debs/*.deb
