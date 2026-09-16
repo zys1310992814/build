@@ -131,15 +131,25 @@ jobs:
           printf 'fdtfile=amlogic/%s\n' "$DTB" > userpatches/armbianEnv.txt
           # 4) 专用镜像：删除镜像中其余所有 .dtb，仅保留本板 DTB。
           #    userpatches/customize-image.sh 在 rootfs 构建完成后、生成 .img 之前 chroot 执行，可安全删文件。
+          #    注意：/boot/dtb 常是指向 /boot/dtb-<ver> 的符号链接，find 默认不跟随符号链接，
+          #    直接 `find /boot/dtb` 会返回空导致删除静默失败；故先 readlink -f 解析真实目录再操作。
           {
             echo '#!/usr/bin/env bash'
             echo 'set -e'
             echo "DTB=\"${DTB}\""
-            echo 'echo "== 专用镜像：删除 /boot/dtb 下除 ${DTB} 外的所有 .dtb =="'
-            echo 'find /boot/dtb -type f -name "*.dtb" ! -name "${DTB}" -delete'
+            echo 'echo "== 专用镜像：删除 /boot/dtb 下除 ${DTB} 外的所有 .dtb（.dtbo 覆盖层与其余文件均保持不变）=="'
+            echo '# /boot/dtb 可能是指向 /boot/dtb-<ver> 的符号链接，find 默认不跟随，故先解析真实路径'
+            echo 'for d in /boot/dtb /boot/dtb-*; do'
+            echo '  [ -e "$d" ] || continue'
+            echo '  t=$(readlink -f "$d")'
+            echo '  [ -d "$t" ] && find "$t" -type f -name "*.dtb" ! -name "${DTB}" -delete'
+            echo 'done'
             echo 'echo "fdtfile=amlogic/${DTB}" > /boot/armbianEnv.txt'
             echo 'echo "保留的 DTB："'
-            echo 'find /boot/dtb -type f -name "*.dtb"'
+            echo 'for d in /boot/dtb /boot/dtb-*; do'
+            echo '  [ -e "$d" ] || continue'
+            echo '  t=$(readlink -f "$d"); [ -d "$t" ] && find "$t" -type f -name "*.dtb"'
+            echo 'done'
           } > userpatches/customize-image.sh
           chmod +x userpatches/customize-image.sh
           echo "已注入 DTB -> /boot/dtb/amlogic/$DTB，并写入 customize-image.sh 清理其余 DTB"
