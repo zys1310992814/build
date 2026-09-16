@@ -18,9 +18,9 @@
 #
 # 资源提示（完整镜像 / Amlogic）：
 #   * GitHub 托管 ubuntu-latest（2 vCPU / 7GB / 磁盘约 14G 可用）几乎必然 OOM 或磁盘耗尽，
-#     且 6 小时硬上限经常不够。完整镜像必须用自托管 runner。
-#   * 本工作流提供 runner 选择输入：默认 ["self-hosted","linux","x64"]。
-#     在 Settings→Actions→Runners 注册一台 Linux x86_64 runner（WSL2 里跑即可），
+#     且 6 小时硬上限经常不够；完整镜像建议用自托管 runner（见 runner 输入）。
+#   * 本工作流提供 runner 选择输入：默认 ubuntu-latest（无自托管 runner 时）。
+#     在 Settings→Actions→Runners 注册自托管 runner 后，可切换为 ["self-hosted","linux","x64"]，
 #     标签自行匹配；建议规格 ≥4 核 / 8GB 内存 / 40GB 空闲磁盘。
 #   * 自托管 runner 规格参考官方：big(6-16核/16G)、small(4核/8G)、arm64。
 # =============================================================================
@@ -66,9 +66,9 @@ on:
         type: choice
         options: ["no", "yes"]
       runner:
-        description: "运行器。完整镜像务必用自托管 runner"
+        description: "运行器。无自托管 runner 时选 ubuntu-latest；稳定编完整镜像用自托管"
         required: true
-        default: '["self-hosted", "linux", "x64"]'
+        default: "ubuntu-latest"
         type: choice
         options:
           - '["self-hosted", "linux", "x64"]'
@@ -83,9 +83,9 @@ permissions:
 jobs:
   build:
     name: "Build ${{ inputs.board || 'aml-s9xx-box' }}"
-    # runner 通过 workflow_dispatch 输入选择；默认自托管（完整镜像必须）
+    # runner 通过 workflow_dispatch 输入选择；默认 ubuntu-latest（无自托管 runner 时）
     runs-on: ${{ fromJson(inputs.runner) }}
-    timeout-minutes: 1440
+    timeout-minutes: 360
     env:
       BOARD: ${{ inputs.board || 'aml-s9xx-box' }}
       BRANCH: ${{ inputs.branch || 'current' }}
@@ -105,6 +105,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Inject custom DTB (meson-sm1-ac2xx-generic.dtb)
+        run: |
+          DTB="meson-sm1-ac2xx-generic.dtb"
+          if [ ! -f "$DTB" ]; then
+            echo "::error::$DTB 不在仓库根目录。请把它放到仓库根目录并提交：git add $DTB && git commit -m dtb && git push"
+            exit 1
+          fi
+          # 1) 放入 userpatches/overlay/boot/dtb/amlogic/ -> 构建后镜像的 /boot/dtb/amlogic/
+          mkdir -p userpatches/overlay/boot/dtb/amlogic
+          cp "$DTB" userpatches/overlay/boot/dtb/amlogic/
+          # 2) 同时放进 userpatches/ 根目录，兼容 build 对 userpatches/*.dtb 的拷贝逻辑
+          cp "$DTB" userpatches/
+          # 3) 让构建出的镜像用该 DTB 启动（userpatches/armbianEnv.txt 会被复制到 /boot/armbianEnv.txt）
+          printf 'fdtfile=amlogic/%s\n' "$DTB" > userpatches/armbianEnv.txt
+          echo "已注入 DTB -> /boot/dtb/amlogic/$DTB"
+          cat userpatches/armbianEnv.txt
 
       - name: Install system dependencies
         run: |
