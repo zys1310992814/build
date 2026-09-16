@@ -108,6 +108,12 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up QEMU (register binfmt for cross-arch build)
+        # 在 amd64 runner 上编 arm64 镜像需要 qemu binfmt 处理器，否则构建容器内
+        # update-binfmts / arch-test 失败（"arm64: not supported on this machine/kernel"）。
+        # 该 action 用 tonistiigi/binfmt 注册带 F(fix_binary) 标志的处理器，子容器自动继承。
+        uses: docker/setup-qemu-action@v3
+
       - name: Inject custom DTB (meson-sm1-ac2xx-generic.dtb)
         run: |
           DTB="meson-sm1-ac2xx-generic.dtb"
