@@ -10,8 +10,12 @@
 #     infrastructure-dispatch-to-fork.yml 会在 push/PR/release 时向你仓库发出
 #     repository_dispatch 事件 "armbian"，本工作流的 repository_dispatch 触发器会响应。
 #     注意：开启 repository_dispatch 后，每次 push 都会自动触发构建，按需保留。
-#   * 专用镜像：仅保留仓库根的 meson-sm1-ac2xx-generic.dtb，通过 userpatches/customize-image.sh
-#     在打包前 chroot 删除镜像 /boot/dtb 下其余所有 .dtb（.dtbo 覆盖层保留）。fdtfile 指向该 DTB。
+#   * 专用镜像：仅保留仓库根的 meson-sm1-ac2xx-generic.dtb。
+#     机制（已据框架源码修正）：Armbian 仅把 userpatches/overlay 以只读方式 bind-mount 到
+#     chroot 内的 /tmp/overlay，不会自动复制到 rootfs；故 customize-image.sh 需自行把
+#     /tmp/overlay/meson-sm1-ac2xx-generic.dtb 复制到 /boot/dtb/amlogic/，再删除其余 .dtb。
+#     meson64 走 extlinux 启动，镜像打包时若存在 extlinux.conf 会删除 armbianEnv.txt，
+#     因此真正生效的启动配置是 customize-image.sh 修正后的 extlinux.conf `fdt dtb/amlogic/<dtb>`。
 #   * 专用镜像 DTB 校验：customize-image.sh 删除后会用 ::group::/::notice::/::warning:: 直接在构建日志
 #     输出 /boot 与 /boot/dtb 文件列表及剩余 .dtb 数量，构建过程中即可查看，无需下载镜像；
 #     另含 "Verify DTB in built image" 步骤：构建后挂载产物 .img 的 BOOT 分区复核（continue-on-error，失败不阻断）。
@@ -149,41 +153,58 @@ jobs:
         # 该 action 用 tonistiigi/binfmt 注册带 F(fix_binary) 标志的处理器，子容器自动继承。
         uses: docker/setup-qemu-action@v3
 
-      - name: Inject custom DTB + 专用镜像（删除其余 DTB）
+      - name: Inject custom DTB + 专用镜像（仅保留本板 DTB）
         run: |
           DTB="meson-sm1-ac2xx-generic.dtb"
           if [ ! -f "$DTB" ]; then
             echo "::error::$DTB 不在仓库根目录。请把它放到仓库根目录并提交：git add $DTB && git commit -m dtb && git push"
             exit 1
           fi
-          # 1) 放入 userpatches/overlay/boot/dtb/amlogic/ -> 构建后镜像的 /boot/dtb/amlogic/
-          mkdir -p userpatches/overlay/boot/dtb/amlogic
-          cp "$DTB" userpatches/overlay/boot/dtb/amlogic/
-          # 2) 同时放进 userpatches/ 根目录，兼容 build 对 userpatches/*.dtb 的拷贝逻辑
-          cp "$DTB" userpatches/
-          # 3) 让构建出的镜像用该 DTB 启动（userpatches/armbianEnv.txt 会被复制到 /boot/armbianEnv.txt）
-          printf 'fdtfile=amlogic/%s\n' "$DTB" > userpatches/armbianEnv.txt
-          # 4) 专用镜像：删除镜像中其余所有 .dtb，仅保留本板 DTB。
-          #    userpatches/customize-image.sh 在 rootfs 构建完成后、生成 .img 之前 chroot 执行，可安全删文件。
-          #    注意：/boot/dtb 常是指向 /boot/dtb-<ver> 的符号链接，find 默认不跟随符号链接，
-          #    直接 `find /boot/dtb` 会返回空导致删除静默失败；故先 readlink -f 解析真实目录再操作。
+          # 把 DTB 放进 userpatches/overlay/ 根目录。
+          # 关键：Armbian 仅把 userpatches/overlay 以只读方式 bind-mount 到 chroot 内的 /tmp/overlay，
+          # 并不会自动复制到 rootfs。必须在 customize-image.sh 里自行 cp 到 /boot/dtb/amlogic/。
+          # （之前放在 overlay/boot/dtb/amlogic/ 但从未被复制进 /boot，导致删除后 0 个 DTB。）
+          mkdir -p userpatches/overlay
+          cp "$DTB" userpatches/overlay/
+          # 生成 userpatches/customize-image.sh（rootfs 构建完、打包 .img 前 chroot 执行）：
+          #   1) 从 /tmp/overlay/$DTB 复制到 /boot/dtb/amlogic/（/boot/dtb 是符号链接，cp 跟随）
+          #   2) 删除 /boot/dtb* 下其余所有 .dtb（保留刚复制的唯一一个）
+          #   3) 修正 extlinux.conf 的 fdt 行指向本板 DTB
+          #      meson64 走 extlinux 启动；镜像打包时若存在 extlinux.conf 会删除 armbianEnv.txt，
+          #      所以真正生效的启动配置是 extlinux.conf 里的 fdt，而非 armbianEnv.txt。
+          #   4) 仍写 /boot/armbianEnv.txt 作兜底（被删也不影响 extlinux 启动）
           {
             echo '#!/usr/bin/env bash'
             echo 'set -e'
             echo "DTB=\"${DTB}\""
-            echo 'echo "== 专用镜像：删除 /boot/dtb 下除 ${DTB} 外的所有 .dtb（.dtbo 覆盖层与其余文件均保持不变）=="'
-            echo '# /boot/dtb 可能是指向 /boot/dtb-<ver> 的符号链接，find 默认不跟随，故先解析真实路径'
+            echo 'SRC="/tmp/overlay/${DTB}"'
+            echo 'echo "== 专用镜像：仅保留 ${DTB} 作为唯一启动 DTB =="'
+            echo 'if [ ! -f "$SRC" ]; then'
+            echo '  echo "::error::/tmp/overlay/${DTB} 不存在，overlay 未挂载或文件名不符"'
+            echo '  exit 1'
+            echo 'fi'
+            echo '# 先删除 /boot/dtb 与 /boot/dtb-* 下所有 .dtb（含符号链接真实目录）'
             echo 'for d in /boot/dtb /boot/dtb-*; do'
             echo '  [ -e "$d" ] || continue'
             echo '  t=$(readlink -f "$d")'
-            echo '  [ -d "$t" ] && find "$t" -type f -name "*.dtb" ! -name "${DTB}" -delete'
+            echo '  [ -d "$t" ] && find "$t" -type f -name "*.dtb" -delete'
             echo 'done'
+            echo '# 再复制本板 DTB 到 /boot/dtb/amlogic/（cp 跟随 /boot/dtb 符号链接）'
+            echo 'mkdir -p /boot/dtb/amlogic'
+            echo 'cp "$SRC" /boot/dtb/amlogic/'
+            echo '# 修正 extlinux.conf 的 fdt 行（meson64 实际启动配置）'
+            echo 'if [ -f /boot/extlinux/extlinux.conf ]; then'
+            echo '  sed -i -E "s#^ *fdt .*#  fdt dtb/amlogic/${DTB}#" /boot/extlinux/extlinux.conf'
+            echo '  echo "已修正 extlinux.conf fdt -> dtb/amlogic/${DTB}"'
+            echo 'else'
+            echo '  echo "::warning::未找到 /boot/extlinux/extlinux.conf，请确认启动方式"'
+            echo 'fi'
             echo 'echo "fdtfile=amlogic/${DTB}" > /boot/armbianEnv.txt'
-            echo '# ---- 专用镜像 DTB 校验：构建过程中直接输出，无需下载镜像即可查看 ----'
-            echo 'echo "::group::📂 校验 /boot 顶层目录"'
+            echo '# ---- 构建中校验输出（无需下载镜像即可查看）----'
+            echo 'echo "::group::校验 /boot 顶层目录"'
             echo 'ls -la /boot'
             echo 'echo "::endgroup::"'
-            echo 'echo "::group::📂 校验 /boot/dtb 目录（含 amlogic 子目录，已解析符号链接）"'
+            echo 'echo "::group::校验 /boot/dtb 目录（含 amlogic 子目录，已解析符号链接）"'
             echo 'for d in /boot/dtb /boot/dtb-*; do'
             echo '  [ -e "$d" ] || continue'
             echo '  t=$(readlink -f "$d")'
@@ -191,25 +212,27 @@ jobs:
             echo '  ls -laR "$t" 2>/dev/null'
             echo 'done'
             echo 'echo "::endgroup::"'
-            echo 'echo "::group::🔎 校验 全部剩余 .dtb 文件（/boot 下，预期仅 1 个）"'
+            echo 'echo "::group::校验 全部剩余 .dtb 文件（/boot 下，预期仅 1 个）"'
             echo 'mapfile -t remaining < <(find /boot -type f -name "*.dtb" 2>/dev/null)'
             echo 'if [ ${#remaining[@]} -eq 0 ]; then'
             echo '  echo "::error::未找到任何 .dtb，专用镜像缺少启动所需 DTB！"'
             echo 'elif [ ${#remaining[@]} -eq 1 ]; then'
-            echo '  echo "::notice::✅ 仅保留 1 个 DTB：${remaining[0]}"'
+            echo '  echo "::notice::仅保留 1 个 DTB：${remaining[0]}"'
             echo 'else'
-            echo '  echo "::warning::⚠️ 残留 ${#remaining[@]} 个 .dtb（预期仅 1 个），清单："'
+            echo '  echo "::warning::残留 ${#remaining[@]} 个 .dtb（预期仅 1 个），清单："'
             echo '  printf "%s\n" "${remaining[@]}"'
             echo 'fi'
             echo 'printf "%s\n" "${remaining[@]}"'
             echo 'echo "::endgroup::"'
-            echo 'echo "::group::📄 校验 /boot/armbianEnv.txt (fdtfile)"'
+            echo 'echo "::group::校验 /boot/extlinux/extlinux.conf (fdt)"'
+            echo 'grep -E "^[[:space:]]*fdt" /boot/extlinux/extlinux.conf || echo "(无 fdt 行)"'
+            echo 'echo "::endgroup::"'
+            echo 'echo "::group::校验 /boot/armbianEnv.txt (fdtfile)"'
             echo 'cat /boot/armbianEnv.txt'
             echo 'echo "::endgroup::"'
           } > userpatches/customize-image.sh
           chmod +x userpatches/customize-image.sh
-          echo "已注入 DTB -> /boot/dtb/amlogic/$DTB，并写入 customize-image.sh 清理其余 DTB"
-          cat userpatches/armbianEnv.txt
+          echo "已注入 DTB；customize-image.sh 将复制 $DTB 到 /boot/dtb/amlogic/ 并删除其余 DTB、修正 extlinux.conf fdt"
 
       - name: Install system dependencies
         run: |
@@ -270,7 +293,7 @@ jobs:
             echo "::notice::未找到未压缩 .img（可能构建失败或仅产出 .xz），跳过挂载校验；以 customize-image.sh 输出为准"
             exit 0
           fi
-          echo "::group::🔧 挂载构建产物并列出 /boot/dtb"
+          echo "::group::挂载构建产物并列出 /boot/dtb"
           sudo apt-get install -y --no-install-recommends fdisk >/dev/null 2>&1 || true
           LOOP=$(sudo losetup -f --show -P "$IMG")
           sudo mkdir -p /mnt/armbian_boot
@@ -279,7 +302,20 @@ jobs:
             ls -la /mnt/armbian_boot
             echo "--- /mnt/armbian_boot/dtb/amlogic ---"
             ls -la /mnt/armbian_boot/dtb/amlogic 2>/dev/null || ls -laR /mnt/armbian_boot/dtb 2>/dev/null
-            echo "::notice::镜像 BOOT 分区剩余 .dtb 数量：$(find /mnt/armbian_boot -name '*.dtb' | wc -l)（预期 1）"
+            CNT=$(find /mnt/armbian_boot -name '*.dtb' | wc -l)
+            if [ "$CNT" -eq 1 ]; then
+              echo "::notice::镜像 BOOT 分区剩余 .dtb 数量：$CNT（预期 1）"
+            else
+              echo "::warning::镜像 BOOT 分区剩余 .dtb 数量：$CNT（预期 1）"
+            fi
+            echo "--- 启动配置 fdt（extlinux.conf 为 meson64 实际生效项）---"
+            grep -E "^[[:space:]]*fdt" /mnt/armbian_boot/extlinux/extlinux.conf 2>/dev/null || echo "(extlinux.conf 无 fdt 行)"
+            if [ -f /mnt/armbian_boot/armbianEnv.txt ]; then
+              echo "--- armbianEnv.txt ---"
+              grep -E "fdtfile" /mnt/armbian_boot/armbianEnv.txt
+            else
+              echo "(无 armbianEnv.txt：meson64 走 extlinux，属正常)"
+            fi
             sudo umount /mnt/armbian_boot
           else
             echo "::warning::无法挂载 BOOT 分区（分区布局/格式差异），跳过；以 customize-image.sh 输出为准"
