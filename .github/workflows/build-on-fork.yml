@@ -192,6 +192,43 @@ jobs:
               DEBIAN_FRONTEND="noninteractive"
           fi
 
+      - name: Show BOOT partition contents (pre-upload inspection)
+        # 上传产物前，直接在本 runner 挂载构建出的 .img 的 BOOT 分区并列出全部文件/文件夹，
+        # 无需下载镜像即可在 Actions 日志中查看 boot 分区结构。挂载失败（分区布局/格式差异）
+        # 时自动跳过，不影响后续上传步骤。
+        if: always()
+        continue-on-error: true
+        run: |
+          IMG=$(ls -1 output/images/*.img 2>/dev/null | head -n1)
+          if [ -z "$IMG" ]; then
+            echo "::warning::未找到未压缩的 .img，尝试解压 .img.xz 后查看"
+            XZ=$(ls -1 output/images/*.img.xz 2>/dev/null | head -n1)
+            if [ -n "$XZ" ]; then
+              xz -dk "$XZ"
+              IMG=$(ls -1 output/images/*.img 2>/dev/null | head -n1)
+            fi
+          fi
+          if [ -z "$IMG" ]; then
+            echo "::error::仍找不到可挂载的 .img，跳过 BOOT 分区查看"
+            exit 0
+          fi
+          echo "::group::📂 BOOT 分区文件/文件夹列表 ($IMG)"
+          sudo apt-get install -y --no-install-recommends fdisk >/dev/null 2>&1 || true
+          LOOP=$(sudo losetup -f --show -P "$IMG")
+          sudo mkdir -p /mnt/armbian_boot
+          if sudo mount "${LOOP}p1" /mnt/armbian_boot 2>/dev/null; then
+            echo "--- 顶层 (ls -la) ---"
+            ls -la /mnt/armbian_boot
+            echo "--- 完整目录树 (ls -laR) ---"
+            ls -laR /mnt/armbian_boot
+            echo "::notice::BOOT 分区文件总数：$(find /mnt/armbian_boot -type f | wc -l)；.dtb 数量：$(find /mnt/armbian_boot -name '*.dtb' | wc -l)"
+            sudo umount /mnt/armbian_boot
+          else
+            echo "::warning::无法挂载 ${LOOP}p1（分区布局/格式可能不同），跳过"
+          fi
+          sudo losetup -d "$LOOP" 2>/dev/null || true
+          echo "::endgroup::"
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
