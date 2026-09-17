@@ -12,6 +12,9 @@
 #     注意：开启 repository_dispatch 后，每次 push 都会自动触发构建，按需保留。
 #   * 专用镜像：仅保留仓库根的 meson-sm1-ac2xx-generic.dtb，通过 userpatches/customize-image.sh
 #     在打包前 chroot 删除镜像 /boot/dtb 下其余所有 .dtb（.dtbo 覆盖层保留）。fdtfile 指向该 DTB。
+#   * 专用镜像 DTB 校验：customize-image.sh 删除后会用 ::group::/::notice::/::warning:: 直接在构建日志
+#     输出 /boot 与 /boot/dtb 文件列表及剩余 .dtb 数量，构建过程中即可查看，无需下载镜像；
+#     另含 "Verify DTB in built image" 步骤：构建后挂载产物 .img 的 BOOT 分区复核（continue-on-error，失败不阻断）。
 #   * CI 优化（针对 ubuntu-latest 资源约束）：构建前释放磁盘 + 添加 8G swap，降低完整镜像 OOM/磁盘耗尽概率；
 #     workflow 级 concurrency 取消重复触发；产物保留 30 天；失败自动上传 output/logs 便于排查。
 #
@@ -172,11 +175,33 @@ jobs:
             echo '  [ -d "$t" ] && find "$t" -type f -name "*.dtb" ! -name "${DTB}" -delete'
             echo 'done'
             echo 'echo "fdtfile=amlogic/${DTB}" > /boot/armbianEnv.txt'
-            echo 'echo "保留的 DTB："'
+            echo '# ---- 专用镜像 DTB 校验：构建过程中直接输出，无需下载镜像即可查看 ----'
+            echo 'echo "::group::📂 校验 /boot 顶层目录"'
+            echo 'ls -la /boot'
+            echo 'echo "::endgroup::"'
+            echo 'echo "::group::📂 校验 /boot/dtb 目录（含 amlogic 子目录，已解析符号链接）"'
             echo 'for d in /boot/dtb /boot/dtb-*; do'
             echo '  [ -e "$d" ] || continue'
-            echo '  t=$(readlink -f "$d"); [ -d "$t" ] && find "$t" -type f -name "*.dtb"'
+            echo '  t=$(readlink -f "$d")'
+            echo '  echo "--- $d -> $t ---"'
+            echo '  ls -laR "$t" 2>/dev/null'
             echo 'done'
+            echo 'echo "::endgroup::"'
+            echo 'echo "::group::🔎 校验 全部剩余 .dtb 文件（/boot 下，预期仅 1 个）"'
+            echo 'mapfile -t remaining < <(find /boot -type f -name "*.dtb" 2>/dev/null)'
+            echo 'if [ ${#remaining[@]} -eq 0 ]; then'
+            echo '  echo "::error::未找到任何 .dtb，专用镜像缺少启动所需 DTB！"'
+            echo 'elif [ ${#remaining[@]} -eq 1 ]; then'
+            echo '  echo "::notice::✅ 仅保留 1 个 DTB：${remaining[0]}"'
+            echo 'else'
+            echo '  echo "::warning::⚠️ 残留 ${#remaining[@]} 个 .dtb（预期仅 1 个），清单："'
+            echo '  printf "%s\n" "${remaining[@]}"'
+            echo 'fi'
+            echo 'printf "%s\n" "${remaining[@]}"'
+            echo 'echo "::endgroup::"'
+            echo 'echo "::group::📄 校验 /boot/armbianEnv.txt (fdtfile)"'
+            echo 'cat /boot/armbianEnv.txt'
+            echo 'echo "::endgroup::"'
           } > userpatches/customize-image.sh
           chmod +x userpatches/customize-image.sh
           echo "已注入 DTB -> /boot/dtb/amlogic/$DTB，并写入 customize-image.sh 清理其余 DTB"
@@ -228,6 +253,35 @@ jobs:
               BETA="yes" \
               DEBIAN_FRONTEND="noninteractive"
           fi
+
+      - name: Verify DTB in built image (no download needed)
+        # 构建产物 .img 生成后，直接在本 runner 挂载 BOOT 分区并列出 /boot/dtb，
+        # 无需下载镜像即可在日志中确认专用镜像仅含目标 DTB。挂载可能因分区/格式差异失败，
+        # 故设为 continue-on-error，失败时以 customize-image.sh 的构建中输出为准。
+        if: always()
+        continue-on-error: true
+        run: |
+          IMG=$(ls -1 output/images/*.img 2>/dev/null | head -n1)
+          if [ -z "$IMG" ]; then
+            echo "::notice::未找到未压缩 .img（可能构建失败或仅产出 .xz），跳过挂载校验；以 customize-image.sh 输出为准"
+            exit 0
+          fi
+          echo "::group::🔧 挂载构建产物并列出 /boot/dtb"
+          sudo apt-get install -y --no-install-recommends fdisk >/dev/null 2>&1 || true
+          LOOP=$(sudo losetup -f --show -P "$IMG")
+          sudo mkdir -p /mnt/armbian_boot
+          if sudo mount "${LOOP}p1" /mnt/armbian_boot 2>/dev/null; then
+            echo "--- /mnt/armbian_boot (BOOT 分区) 顶层 ---"
+            ls -la /mnt/armbian_boot
+            echo "--- /mnt/armbian_boot/dtb/amlogic ---"
+            ls -la /mnt/armbian_boot/dtb/amlogic 2>/dev/null || ls -laR /mnt/armbian_boot/dtb 2>/dev/null
+            echo "::notice::镜像 BOOT 分区剩余 .dtb 数量：$(find /mnt/armbian_boot -name '*.dtb' | wc -l)（预期 1）"
+            sudo umount /mnt/armbian_boot
+          else
+            echo "::warning::无法挂载 BOOT 分区（分区布局/格式差异），跳过；以 customize-image.sh 输出为准"
+          fi
+          sudo losetup -d "$LOOP" 2>/dev/null || true
+          echo "::endgroup::"
 
       - name: Upload artifacts
         if: always()
