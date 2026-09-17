@@ -132,7 +132,11 @@ jobs:
       - name: Add swap (mitigate OOM for full image build on 7GB runner)
         # ubuntu-latest 只有 7G 内存，编完整镜像（含打包 xz）常被 OOM kill。
         # 挂 8G swap 兜底，显著降低 OOM 概率（速度会变慢，但能跑完）。
+        # 注意：runner 复用或上次运行可能残留一个“已激活”的 /swapfile，直接 fallocate/dd 改写会报
+        # “Text file busy”(ETXTBSY)。故重建前先 swapoff 并删除，避免该步骤直接失败退出。
         run: |
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile
           sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
