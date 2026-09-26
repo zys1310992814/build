@@ -4,7 +4,7 @@
 # 说明：
 #   * 本工作流是 build-on-fork.yml 的 x64（x86_64）变体，专用于生成 x86_64 镜像。
 #   * 与 ARM 版(aml-s9xx-box)的关键区别：
-#       - 目标板型改为 Armbian 的 x86_64 标准 PC 目标 board=x86（生成可启动的 .img）。
+#       - 目标板型改为 Armbian 的 x86_64 标准 PC 目标 board=uefi-x86（生成可启动的 .img）。
 #       - 在 amd64 runner（ubuntu-latest / 自托管 x64）上构建 amd64 目标属于「原生架构」，
 #         不需要 QEMU/binfmt 跨架构模拟，因此已移除 Set up QEMU 步骤。
 #       - x86 镜像的分区布局为 EFI(p1, vfat) + boot(p2, ext4) + root(p3)，
@@ -32,15 +32,15 @@
 # =============================================================================
 
 name: "Build Armbian x64 (fork)"
-run-name: "Build x64 ${{ inputs.board || 'x86' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
+run-name: "Build x64 ${{ inputs.board || 'uefi-x86' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
 
 on:
   workflow_dispatch:
     inputs:
       board:
-        description: "目标板型（x86_64）。标准 PC/虚拟机用 x86；仅 rootfs（不出镜像）用 generic"
+        description: "目标板型（x86_64）。标准 UEFI/BIOS PC/虚拟机用 uefi-x86；仅 rootfs（不出镜像）用 generic"
         required: true
-        default: "x86"
+        default: "uefi-x86"
       branch:
         description: "内核分支"
         required: true
@@ -100,7 +100,7 @@ jobs:
     runs-on: ${{ fromJson(inputs.runner == 'ubuntu-latest' && '"ubuntu-latest"' || '["self-hosted", "linux", "x64"]') }}
     timeout-minutes: 360
     env:
-      BOARD: ${{ inputs.board || 'x86' }}
+      BOARD: ${{ inputs.board || 'uefi-x86' }}
       BRANCH: ${{ inputs.branch || 'current' }}
       RELEASE: ${{ inputs.release || 'bookworm' }}
       BUILD_MINIMAL: ${{ inputs.minimal || 'no' }}
