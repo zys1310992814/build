@@ -1,0 +1,253 @@
+# =============================================================================
+# Build Armbian on a FORK via GitHub Actions — x64 架构构建
+# -----------------------------------------------------------------------------
+# 说明：
+#   * 本工作流是 build-on-fork.yml 的 x64（x86_64）变体，专用于生成 x86_64 镜像。
+#   * 与 ARM 版(aml-s9xx-box)的关键区别：
+#       - 目标板型改为 Armbian 的 x86_64 标准 PC 目标 board=x86（生成可启动的 .img）。
+#       - 在 amd64 runner（ubuntu-latest / 自托管 x64）上构建 amd64 目标属于「原生架构」，
+#         不需要 QEMU/binfmt 跨架构模拟，因此已移除 Set up QEMU 步骤。
+#       - x86 镜像的分区布局为 EFI(p1, vfat) + boot(p2, ext4) + root(p3)，
+#         分区查看步骤已适配，会依次列出 p1/p2/p3。
+#   * 官方 maintenance-build-artifacts.yml 带 `if: owner=='armbian'` 守卫，且依赖
+#     Armbian 自托管 runner，在个人 fork 上不会真正执行；本工作流用 workflow_dispatch
+#     （手动）触发，直接 checkout 本仓库并在 runner 上运行 ./compile.sh 完成标准构建。
+#   * 可选接入官方 fork 转发机制：若仓库设置了密钥 ARMBIAN_SELF_DISPATCH_TOKEN，
+#     infrastructure-dispatch-to-fork.yml 会在 push/PR/release 时发出
+#     repository_dispatch 事件 "armbian"，本工作流的 repository_dispatch 触发器会响应。
+#   * CI 优化（针对 ubuntu-latest 资源约束）：构建前释放磁盘 + 添加 8G swap，降低
+#     完整镜像 OOM/磁盘耗尽概率；workflow 级 concurrency 取消重复触发；产物保留 30 天；
+#     失败自动上传 output/logs 便于排查。
+#
+# 用法：
+#   1. 把本文件放到 fork 仓库的 .github/workflows/ 目录下（build-on-fork-x64.yml）。
+#   2. Settings → Actions → General → 选 "Allow all actions and reusable workflows"。
+#   3. Actions 标签页 → 选 "Build Armbian x64 (fork)" → Run workflow → 填 board/branch/release。
+#
+# 资源提示（完整镜像 / x86_64）：
+#   * GitHub 托管 ubuntu-latest（2 vCPU / 7GB / 磁盘约 14G 可用）编完整镜像仍较紧张，
+#     且 6 小时硬上限经常不够；完整镜像建议用自托管 runner（见 runner 输入）。
+#   * 本工作流提供 runner 选择输入：默认 ubuntu-latest（无自托管 runner 时）。
+#     在 Settings→Actions→Runners 注册自托管 runner 后，可切换为 ["self-hosted","linux","x64"]。
+# =============================================================================
+
+name: "Build Armbian x64 (fork)"
+run-name: "Build x64 ${{ inputs.board || 'x86' }} / ${{ inputs.branch || 'current' }} / ${{ inputs.release || 'bookworm' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "目标板型（x86_64）。标准 PC/虚拟机用 x86；仅 rootfs（不出镜像）用 generic"
+        required: true
+        default: "x86"
+      branch:
+        description: "内核分支"
+        required: true
+        default: "current"
+        type: choice
+        options: [legacy, current, edge]
+      release:
+        description: "用户空间发行版"
+        required: true
+        default: "bookworm"
+        type: choice
+        options: [bullseye, bookworm, trixie, noble]
+      build_target:
+        description: "构建镜像还是仅内核/U-Boot"
+        required: true
+        default: "image"
+        type: choice
+        options: [image, kernel]
+      minimal:
+        description: "最小镜像（BUILD_MINIMAL）。完整镜像选 no"
+        required: true
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      desktop:
+        description: "是否带桌面环境（BUILD_DESKTOP）。完整服务器镜像选 no"
+        required: true
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      runner:
+        description: "运行器。无自托管 runner 时选 ubuntu-latest；稳定编完整镜像用自托管"
+        required: true
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - '["self-hosted", "linux", "x64"]'
+          - "ubuntu-latest"
+  # 接入官方 fork 转发机制（可选，按需开启）
+  repository_dispatch:
+    types: ["armbian"]
+
+permissions:
+  contents: read
+
+# 同一 board/branch/release/build_target 配置重复触发时，取消仍在排队的旧 run，
+# 避免浪费 ubuntu-latest 的 6 小时额度（官方 CI 也用 concurrency + cancel-in-progress）。
+concurrency:
+  group: build-armbian-x64-${{ github.ref }}-${{ inputs.board }}-${{ inputs.branch }}-${{ inputs.release }}-${{ inputs.build_target }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "Build x64 ${{ inputs.board || 'x86' }}"
+    # runner 通过 workflow_dispatch 输入选择；默认 ubuntu-latest（无自托管 runner 时）
+    # 用三元把两种输入都转成合法 JSON 再 fromJson：ubuntu-latest -> 字符串，其余 -> 数组
+    runs-on: ${{ fromJson(inputs.runner == 'ubuntu-latest' && '"ubuntu-latest"' || '["self-hosted", "linux", "x64"]') }}
+    timeout-minutes: 360
+    env:
+      BOARD: ${{ inputs.board || 'x86' }}
+      BRANCH: ${{ inputs.branch || 'current' }}
+      RELEASE: ${{ inputs.release || 'bookworm' }}
+      BUILD_MINIMAL: ${{ inputs.minimal || 'no' }}
+      BUILD_DESKTOP: ${{ inputs.desktop || 'no' }}
+      BUILD_TARGET_VAL: ${{ inputs.build_target || 'image' }}
+      KERNEL_CONFIGURE: "no"      # 不自问内核配置，避免交互卡住
+      IGNORE_UPDATES: "yes"       # 跳过版本更新检查
+      NO_APT_CACHER: "yes"        # 不使用 apt-cacher
+      USE_TORRENT: "no"           # 不用 torrent 下载
+      SHOW_LOG: "yes"
+      BETA: "yes"                 # 允许构建（非稳定分支）
+      DEBIAN_FRONTEND: "noninteractive"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free disk space (avoid full-image build running out of space)
+        # ubuntu-latest 仅约 14G 可用磁盘，完整镜像构建（debootstrap + 内核 + 打包）极易占满。
+        # 删掉 GitHub 预装但本构建用不到的大型工具链缓存，腾出空间。
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/share/dotnet /usr/local/lib/android \
+                       /usr/local/share/powershell /usr/local/go /usr/share/swift
+          sudo apt-get clean
+          df -h
+
+      - name: Add swap (mitigate OOM for full image build on 7GB runner)
+        # ubuntu-latest 只有 7G 内存，编完整镜像（含打包 xz）常被 OOM kill。
+        # 挂 8G swap 兜底，显著降低 OOM 概率（速度会变慢，但能跑完）。
+        # 注意：runner 复用或上次运行可能残留一个“已激活”的 /swapfile，直接 fallocate/dd 改写会报
+        # “Text file busy”(ETXTBSY)。故重建前先 swapoff 并删除，避免该步骤直接失败退出。
+        run: |
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl git gnupg ca-certificates \
+            tzdata pv pigz bison flex bc device-tree-compiler \
+            libncurses-dev libssl-dev grub-efi-amd64-bin mtools
+
+      - name: Show build configuration
+        run: |
+          echo "BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE}"
+          echo "BUILD_MINIMAL=${BUILD_MINIMAL} BUILD_DESKTOP=${BUILD_DESKTOP} BUILD_TARGET=${BUILD_TARGET_VAL}"
+          echo "架构: 原生 x86_64 构建（amd64 runner 编 amd64 目标，无需 QEMU 跨架构模拟）"
+          echo "(KERNEL_ONLY 已废弃，目标由子命令 ./compile.sh build|kernel 决定)"
+
+      - name: Start build (non-interactive)
+        # 所有参数以命令行参数形式传入 ./compile.sh —— Armbian 会 export 它们并带进 Docker 容器，
+        # 比单纯 env: 更可靠（env 变量不一定全被转发进容器，导致卡在交互菜单）。
+        # 新版 Armbian(26.11+) 已废弃 KERNEL_ONLY 环境变量，改用子命令：
+        #   ./compile.sh build  -> 完整镜像(含内核+U-Boot)
+        #   ./compile.sh kernel -> 仅内核/U-Boot
+        run: |
+          if [ "${{ inputs.build_target }}" = "kernel" ]; then
+            ./compile.sh kernel \
+              BOARD="${BOARD}" \
+              BRANCH="${BRANCH}" \
+              KERNEL_CONFIGURE="no" \
+              IGNORE_UPDATES="yes" \
+              NO_APT_CACHER="yes" \
+              USE_TORRENT="no" \
+              BETA="yes" \
+              DEBIAN_FRONTEND="noninteractive"
+          else
+            ./compile.sh build \
+              BOARD="${BOARD}" \
+              BRANCH="${BRANCH}" \
+              RELEASE="${RELEASE}" \
+              BUILD_TARGET="${BUILD_TARGET_VAL}" \
+              BUILD_MINIMAL="${BUILD_MINIMAL}" \
+              BUILD_DESKTOP="${BUILD_DESKTOP}" \
+              KERNEL_CONFIGURE="no" \
+              IGNORE_UPDATES="yes" \
+              NO_APT_CACHER="yes" \
+              USE_TORRENT="no" \
+              BETA="yes" \
+              DEBIAN_FRONTEND="noninteractive"
+          fi
+
+      - name: Show partition contents (pre-upload inspection)
+        # 上传产物前，直接在本 runner 挂载构建出的 .img 的各分区并列出文件，
+        # 无需下载镜像即可在 Actions 日志中查看分区结构。
+        # x86 镜像布局：p1=EFI(vfat, GRUB) / p2=boot(ext4) / p3=root。
+        # 挂载失败（分区布局/格式差异）时自动跳过，不影响后续上传步骤。
+        if: always()
+        continue-on-error: true
+        run: |
+          IMG=$(ls -1 output/images/*.img 2>/dev/null | head -n1)
+          if [ -z "$IMG" ]; then
+            echo "::warning::未找到未压缩的 .img，尝试解压 .img.xz 后查看"
+            XZ=$(ls -1 output/images/*.img.xz 2>/dev/null | head -n1)
+            if [ -n "$XZ" ]; then
+              xz -dk "$XZ"
+              IMG=$(ls -1 output/images/*.img 2>/dev/null | head -n1)
+            fi
+          fi
+          if [ -z "$IMG" ]; then
+            echo "::error::仍找不到可挂载的 .img，跳过分区查看"
+            exit 0
+          fi
+          sudo apt-get install -y --no-install-recommends fdisk >/dev/null 2>&1 || true
+          LOOP=$(sudo losetup -f --show -P "$IMG")
+          echo "::group::💽 分区表 ($IMG)"
+          sudo fdisk -l "$LOOP" || true
+          echo "::endgroup::"
+          for p in p1 p2 p3; do
+            dev="${LOOP}${p}"
+            [ -b "$dev" ] || continue
+            mnt="/mnt/armbian_${p}"
+            sudo mkdir -p "$mnt"
+            if sudo mount "$dev" "$mnt" 2>/dev/null; then
+              echo "::group::📂 分区 $p 顶层文件列表"
+              ls -la "$mnt"
+              sudo umount "$mnt" 2>/dev/null || true
+              echo "::endgroup::"
+            fi
+          done
+          sudo losetup -d "$LOOP" 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-x64-${{ inputs.board || 'x86' }}-${{ inputs.branch || 'current' }}
+          path: |
+            output/images/*.img*
+            output/debs/*.deb
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload debug logs on failure
+        # 构建失败时把完整日志打包，方便定位（尤其是交互卡住 / 依赖缺失类问题）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: armbian-x64-logs-${{ inputs.board || 'x86' }}-${{ inputs.branch || 'current' }}
+          path: |
+            output/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
